@@ -1067,6 +1067,19 @@ Monitor *
 dirtomon(int dir)
 {
 	Monitor *m = NULL;
+	int n = 0;
+
+	for (m = mons; m; m = m->next)
+		n++;
+
+	/* with only two monitors, clamp at the edges instead of wrapping
+	 * around, since wrapping is indistinguishable from just toggling
+	 * back and forth anyway */
+	if (n <= 2) {
+		if (dir > 0)
+			return selmon->next ? selmon->next : selmon;
+		return selmon == mons ? selmon : mons;
+	}
 
 	if (dir > 0) {
 		if (!(m = selmon->next))
