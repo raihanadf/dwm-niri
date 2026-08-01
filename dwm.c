@@ -824,6 +824,10 @@ clientmessage(XEvent *e)
 
 			seturgent(c, 1);
 
+		} else if (c->mon != selmon) {
+			/* don't let a client on an inactive monitor steal focus/
+			 * hijack selmon via a self-requested activation; just flag it */
+			seturgent(c, 1);
 		} else if (c->tags & c->mon->tagset[c->mon->seltags])
 			focus(c);
 		else {
@@ -2300,8 +2304,12 @@ tagmon(const Arg *arg)
 	Monitor *dest;
 	if (!c || !mons->next)
 		return;
-	dest = dirtomon(arg->i);
+	if ((dest = dirtomon(arg->i)) == selmon)
+		return;
 	sendmon(c, dest);
+	selmon = dest;
+	focus(c);
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, dest->mx + dest->mw / 2, dest->my + dest->mh / 2);
 }
 
 void
