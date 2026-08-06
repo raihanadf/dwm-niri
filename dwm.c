@@ -2071,6 +2071,9 @@ sendmon(Client *c, Monitor *m)
 	c->tags = m->tagset[m->seltags]; /* assign tags of target monitor */
 	attachx(c);
 	attachstack(c);
+	/* its column index belongs to the monitor it came from; taking it along
+	 * would drop the window on top of whatever holds that index here */
+	insertcolumn(c);
 	focus(NULL);
 	arrange(NULL);
 	if (c->switchtag)
@@ -2864,10 +2867,13 @@ wintomon(Window w)
 
 	if (w == root && getrootptr(&x, &y))
 		return recttomon(x, y, 1, 1);
-	for (m = mons; m; m = m->next)
+	for (m = mons; m; m = m->next) {
+		if (w == m->container)
+			return m;
 		for (bar = m->bar; bar; bar = bar->next)
 			if (w == bar->win)
 				return m;
+	}
 	if ((c = wintoclient(w)))
 		return c->mon;
 	return selmon;
