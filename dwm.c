@@ -218,9 +218,14 @@ struct Client {
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int iscentered;
 	int issteam;
+	int col;         /* scroller: index of the column this client sits in */
+	float cwfact;    /* scroller: width of that column, as a fraction of the view */
+	float oldcwfact; /* scroller: width to restore when un-maximising */
+	int wantfullscreen; /* scroller: fullscreen whenever this window is focused */
 	Client *next;
 	Client *snext;
 	Monitor *mon;
+	Window parent; /* root, or the monitor's container window */
 	Window win;
 };
 
@@ -259,6 +264,8 @@ struct Monitor {
 	Client *stack;
 	Monitor *next;
 	Bar *bar;
+	Window container; /* clips tiled clients to this monitor's window area */
+	int scrollx;      /* scroller: horizontal offset of the viewport */
 	const Layout *lt[2];
 	Pertag *pertag;
 };
@@ -375,6 +382,7 @@ static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
 static int xerror(Display *dpy, XErrorEvent *ee);
 static int xerrordummy(Display *dpy, XErrorEvent *ee);
+static int xerrorgrab(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void xrdb(const Arg *arg);
 static void zoom(const Arg *arg);
@@ -396,6 +404,7 @@ static int lrpad;            /* sum of left and right padding for text */
  * when moving (or resizing) client windows from one monitor to another. This variable is used
  * internally to ignore such configure requests while movemouse or resizemouse are being used. */
 static int ignoreconfigurerequests = 0;
+static int grabfailed = 0;
 static int (*xerrorxlib)(Display *, XErrorEvent *);
 static unsigned int numlockmask = 0;
 static void (*handler[LASTEvent]) (XEvent *) = {
@@ -753,6 +762,7 @@ cleanupmon(Monitor *mon)
 			systray->bar = NULL;
 		free(bar);
 	}
+	destroycontainer(mon);
 	free(mon->pertag);
 	free(mon);
 }
@@ -934,7 +944,7 @@ configurerequest(XEvent *e)
 			if ((ev->value_mask & (CWX|CWY)) && !(ev->value_mask & (CWWidth|CWHeight)))
 				configure(c);
 			if (ISVISIBLE(c))
-				XMoveResizeWindow(dpy, c->win, c->x, c->y, c->w, c->h);
+				XMoveResizeWindow(dpy, c->win, CONTAINERX(c, c->x), CONTAINERY(c, c->y), c->w, c->h);
 		} else
 			configure(c);
 	} else {
@@ -1275,6 +1285,11 @@ focus(Client *c)
 		XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
 	}
 	selmon->sel = c;
+	/* fullscreen follows focus: whatever just lost focus drops back into
+	 * its column, and whatever gained it takes the screen if that is how
+	 * it was left. Every focus path goes through here -- opening a window,
+	 * closing one, clicking, switching tags -- not just the scroller keys. */
+	syncfullscreen(selmon, c);
 	drawbars();
 
 }
@@ -1437,10 +1452,22 @@ grabkeys(void)
 
 		XUngrabKey(dpy, AnyKey, AnyModifier, root);
 		for (i = 0; i < LENGTH(keys); i++)
-			if ((code = XKeysymToKeycode(dpy, keys[i].keysym)))
+			if ((code = XKeysymToKeycode(dpy, keys[i].keysym))) {
+				/* A combo another client already grabbed fails with
+				 * BadAccess, which xerror() ignores -- the binding then
+				 * silently does nothing forever. Say so instead. */
+				grabfailed = 0;
+				XSetErrorHandler(xerrorgrab);
 				for (j = 0; j < LENGTH(modifiers); j++)
 					XGrabKey(dpy, code, keys[i].mod | modifiers[j], root,
 						True, GrabModeAsync, GrabModeAsync);
+				XSync(dpy, False);
+				XSetErrorHandler(xerror);
+				if (grabfailed)
+					fprintf(stderr, "dwm: key %s (mod 0x%x) is grabbed by another "
+						"client; this binding will not work\n",
+						XKeysymToString(keys[i].keysym), keys[i].mod);
+			}
 	}
 }
 
@@ -1567,6 +1594,7 @@ manage(Window w, XWindowAttributes *wa)
 
 	c = ecalloc(1, sizeof(Client));
 	c->win = w;
+	c->parent = root;
 	/* geometry */
 	c->x = c->oldx = wa->x;
 	c->y = c->oldy = wa->y;
@@ -1632,6 +1660,7 @@ manage(Window w, XWindowAttributes *wa)
 	}
 	attachx(c);
 	attachstack(c);
+	insertcolumn(c);
 	XChangeProperty(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend,
 		(unsigned char *) &(c->win), 1);
 	XMoveResizeWindow(dpy, c->win, c->x + 2 * sw, c->y, c->w, c->h); /* some windows require this */
@@ -1723,6 +1752,7 @@ movemouse(const Arg *arg)
 			else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
 				ny = selmon->wy + selmon->wh - HEIGHT(c);
 			if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
+			&& selmon->lt[selmon->sellt]->arrange != scroller
 			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap)) {
 				togglefloating(NULL);
 			}
@@ -1840,10 +1870,14 @@ resizeclient(Client *c, int x, int y, int w, int h)
 {
 	XWindowChanges wc;
 
-	c->oldx = c->x; c->x = wc.x = x;
-	c->oldy = c->y; c->y = wc.y = y;
+	c->oldx = c->x; c->x = x;
+	c->oldy = c->y; c->y = y;
 	c->oldw = c->w; c->w = wc.width = w;
 	c->oldh = c->h; c->h = wc.height = h;
+
+	updateclientparent(c);
+	wc.x = CONTAINERX(c, c->x);
+	wc.y = CONTAINERY(c, c->y);
 	wc.border_width = c->bw;
 	XConfigureWindow(dpy, c->win, CWX|CWY|CWWidth|CWHeight|CWBorderWidth, &wc);
 	configure(c);
@@ -1892,6 +1926,7 @@ resizemouse(const Arg *arg)
 			&& c->mon->wy + nh >= selmon->wy && c->mon->wy + nh <= selmon->wy + selmon->wh)
 			{
 				if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
+				&& selmon->lt[selmon->sellt]->arrange != scroller
 				&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap)) {
 					togglefloating(NULL);
 				}
@@ -1928,18 +1963,47 @@ restack(Monitor *m)
 		XRaiseWindow(dpy, m->sel->win);
 	if (m->lt[m->sellt]->arrange) {
 		wc.stack_mode = Below;
-		if (m->bar) {
-			wc.sibling = m->bar->win;
-		} else {
-			for (f = m->stack; f && (f->isfloating || !ISVISIBLE(f)); f = f->snext); // find first tiled stack client
-			if (f)
-				wc.sibling = f->win;
-		}
-		for (c = m->stack; c; c = c->snext)
-			if (!c->isfloating && ISVISIBLE(c) && c != f) {
-				XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
-				wc.sibling = c->win;
+		if (m->container != None) {
+			/* Contained clients are not siblings of the bar, so they can
+			 * only be stacked against each other. The container itself was
+			 * lowered when created and stays below the bar and below every
+			 * floating client, which are both children of the root. */
+			for (c = m->stack; c; c = c->snext) {
+				if (c->isfloating || !ISVISIBLE(c) || c->parent != m->container)
+					continue;
+				if (f) {
+					wc.sibling = f->win;
+					XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
+				} else
+					XRaiseWindow(dpy, c->win);
+				f = c;
 			}
+			/* A fullscreen client lives at the root, above the container,
+			 * and nothing inside can stack over it. When focus moves into
+			 * the container, lift the container over it instead -- putting
+			 * the bar back on top -- so the focused window is visible while
+			 * the fullscreen window keeps its state and comes back the
+			 * moment it is focused again. */
+			if (m->sel->parent == m->container && hasfullscreen(m)) {
+				XRaiseWindow(dpy, m->container);
+				if (m->bar)
+					XRaiseWindow(dpy, m->bar->win);
+			} else
+				XLowerWindow(dpy, m->container);
+		} else {
+			if (m->bar) {
+				wc.sibling = m->bar->win;
+			} else {
+				for (f = m->stack; f && (f->isfloating || !ISVISIBLE(f)); f = f->snext); // find first tiled stack client
+				if (f)
+					wc.sibling = f->win;
+			}
+			for (c = m->stack; c; c = c->snext)
+				if (!c->isfloating && ISVISIBLE(c) && c != f) {
+					XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
+					wc.sibling = c->win;
+				}
+		}
 	}
 	XSync(dpy, False);
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
@@ -2232,7 +2296,8 @@ showhide(Client *c)
 		return;
 	if (ISVISIBLE(c)) {
 		/* show clients top down */
-		XMoveWindow(dpy, c->win, c->x, c->y);
+		updateclientparent(c);
+		XMoveWindow(dpy, c->win, CONTAINERX(c, c->x), CONTAINERY(c, c->y));
 		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating)
 			&& !c->isfullscreen
 			)
@@ -2241,7 +2306,8 @@ showhide(Client *c)
 	} else {
 		/* hide clients bottom up */
 		showhide(c->snext);
-		XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
+		updateclientparent(c);
+		XMoveWindow(dpy, c->win, WIDTH(c) * -2, CONTAINERY(c, c->y));
 	}
 }
 
@@ -2436,6 +2502,11 @@ unmanage(Client *c, int destroyed)
 	detach(c);
 	detachstack(c);
 	if (!destroyed) {
+		/* Put the window back on the root before we let go of it --
+		 * otherwise destroying the container would destroy it too.
+		 * Must happen before the grab below, which installs its own
+		 * error handler. */
+		detachcontainer(c);
 		wc.border_width = c->oldbw;
 		XGrabServer(dpy); /* avoid race conditions */
 		XSetErrorHandler(xerrordummy);
@@ -2532,8 +2603,10 @@ updatebarpos(Monitor *m)
 			bar->by = -bar->bh - y_pad;
 
 
-	if (!m->showbar)
+	if (!m->showbar) {
+		updatecontainer(m);
 		return;
+	}
 	for (bar = m->bar; bar; bar = bar->next) {
 		if (!bar->showbar)
 			continue;
@@ -2542,6 +2615,7 @@ updatebarpos(Monitor *m)
 		m->wh -= y_pad + bar->bh;
 		bar->by = (bar->topbar ? m->wy - bar->bh : m->wy + m->wh);
 	}
+	updatecontainer(m);
 }
 
 void
@@ -2812,6 +2886,14 @@ xerror(Display *dpy, XErrorEvent *ee)
 int
 xerrordummy(Display *dpy, XErrorEvent *ee)
 {
+	return 0;
+}
+
+int
+xerrorgrab(Display *dpy, XErrorEvent *ee)
+{
+	if (ee->error_code == BadAccess)
+		grabfailed = 1;
 	return 0;
 }
 

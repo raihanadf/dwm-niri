@@ -16,6 +16,8 @@
 
 /* Other patches */
 #include "attachx.h"
+#include "container.h"
+#include "scroller.h"
 #include "cool_autostart.h"
 #include "cyclelayouts.h"
 #include "pertag.h"
