@@ -304,6 +304,7 @@ static Key keys[] = {
 	{ MODKEY|ShiftMask,             XK_l,          scrollmove,             {.i = +1 } },
 	{ MODKEY,                       XK_s,          setlayout,              {.v = &layouts[4]} },
 	{ MODKEY,                       XK_w,          maximizecol,            {0} },
+	{ MODKEY|ShiftMask,             XK_m,          toggleminimap,          {0} },
 	{ MODKEY|ShiftMask,             XK_s,          gathercolumns,          {0} },
 	{ MODKEY,                       XK_r,          setcolfact,             {.i = +1 } },
 	{ MODKEY,                       XK_equal,      setcolwidth,            {.f = +0.05} },

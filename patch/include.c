@@ -18,6 +18,7 @@
 #include "attachx.c"
 #include "container.c"
 #include "scroller.c"
+#include "minimap.c"
 #include "cool_autostart.c"
 #include "cyclelayouts.c"
 #include "pertag.c"

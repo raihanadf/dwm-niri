@@ -601,6 +601,7 @@ arrangemon(Monitor *m)
 	strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof m->ltsymbol);
 	if (m->lt[m->sellt]->arrange)
 		m->lt[m->sellt]->arrange(m);
+	drawminimap(m);
 }
 
 void
@@ -1253,6 +1254,10 @@ expose(XEvent *e)
 	Monitor *m;
 	XExposeEvent *ev = &e->xexpose;
 
+	if (ev->count == 0 && ev->window == minimapwin) {
+		drawminimap(selmon);
+		return;
+	}
 	if (ev->count == 0 && (m = wintomon(ev->window))) {
 		drawbar(m);
 	}
