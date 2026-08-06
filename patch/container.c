@@ -146,6 +146,7 @@ updatecontainer(Monitor *m)
 		/* below the bar and below any floating client */
 		XLowerWindow(dpy, m->container);
 		XMapWindow(dpy, m->container);
+		redirectcontainer(m);
 	} else
 		XMoveResizeWindow(dpy, m->container, m->wx, m->wy, m->ww, m->wh);
 }

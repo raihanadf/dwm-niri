@@ -602,6 +602,7 @@ arrangemon(Monitor *m)
 	if (m->lt[m->sellt]->arrange)
 		m->lt[m->sellt]->arrange(m);
 	drawminimap(m);
+	drawoverview(m);
 }
 
 void
@@ -1256,6 +1257,10 @@ expose(XEvent *e)
 
 	if (ev->count == 0 && ev->window == minimapwin) {
 		drawminimap(selmon);
+		return;
+	}
+	if (ev->count == 0 && ev->window == overviewwin) {
+		drawoverview(selmon);
 		return;
 	}
 	if (ev->count == 0 && (m = wintomon(ev->window))) {

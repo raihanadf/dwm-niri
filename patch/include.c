@@ -19,6 +19,7 @@
 #include "container.c"
 #include "scroller.c"
 #include "minimap.c"
+#include "overview.c"
 #include "cool_autostart.c"
 #include "cyclelayouts.c"
 #include "pertag.c"
