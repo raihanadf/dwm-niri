@@ -2018,6 +2018,13 @@ restack(Monitor *m)
 				}
 		}
 	}
+	/* the overlays own the top of the stack; restack() above may have just
+	 * raised a floating client over them */
+	if (minimapshown && minimapwin != None)
+		XRaiseWindow(dpy, minimapwin);
+	if (overviewshown && overviewwin != None)
+		XRaiseWindow(dpy, overviewwin);
+
 	XSync(dpy, False);
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 }

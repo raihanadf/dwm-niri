@@ -235,6 +235,10 @@ syncfullscreen(Monitor *m, Client *sel)
 
 	if (!m || m->lt[m->sellt]->arrange != scroller)
 		return;
+	/* the overview shows the strip; nothing may seize the screen while it
+	 * is up, or the window you are looking for is the one you cannot see */
+	if (overviewshown)
+		return;
 	/* setfullscreen() re-arranges, so guard against coming back round */
 	if (syncing)
 		return;

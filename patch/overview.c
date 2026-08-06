@@ -115,11 +115,13 @@ drawoverview(Monitor *m)
 		wa.override_redirect = True;
 		wa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
 		wa.event_mask = ExposureMask;
-		overviewwin = XCreateWindow(dpy, root, m->wx, m->wy, m->ww, m->wh, 0,
+		/* the whole monitor, not the work area: the overview replaces the
+		 * screen while it is up, bar included */
+		overviewwin = XCreateWindow(dpy, root, m->mx, m->my, m->mw, m->mh, 0,
 			DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
 			CWOverrideRedirect|CWBackPixel|CWEventMask, &wa);
 	} else
-		XMoveResizeWindow(dpy, overviewwin, m->wx, m->wy, m->ww, m->wh);
+		XMoveResizeWindow(dpy, overviewwin, m->mx, m->my, m->mw, m->mh);
 	XMapRaised(dpy, overviewwin);
 	XClearWindow(dpy, overviewwin);
 
@@ -132,10 +134,10 @@ drawoverview(Monitor *m)
 		XRenderFreePicture(dpy, dst);
 		return;
 	}
-	scale = MIN((double)(m->ww - 2 * OVERVIEWPAD) / total,
-		(double)(m->wh - 2 * OVERVIEWPAD) / m->wh);
-	xoff = (m->ww - total * scale) / 2;
-	yoff = (m->wh - m->wh * scale) / 2;
+	scale = MIN((double)(m->mw - 2 * OVERVIEWPAD) / total,
+		(double)(m->mh - 2 * OVERVIEWPAD) / m->wh);
+	xoff = (m->mw - total * scale) / 2;
+	yoff = (m->mh - m->wh * scale) / 2;
 
 	for (c = nextcol(m->clients); c; c = nextcol(c->next)) {
 		if (c->isfullscreen)
@@ -170,10 +172,20 @@ hideoverview(void)
 void
 toggleoverview(const Arg *arg)
 {
-	if (overviewshown)
+	Client *c;
+
+	if (overviewshown) {
 		hideoverview();
-	else {
+		syncfullscreen(selmon, selmon->sel); /* put fullscreen back */
+	} else {
 		overviewshown = 1;
-		arrange(selmon);
+		/* A fullscreen window owns the whole monitor rather than a slot on
+		 * the strip, so it has nowhere to be drawn here. Drop it back into
+		 * its column for the duration -- wantfullscreen is kept, so closing
+		 * the overview restores it. */
+		for (c = selmon->clients; c; c = c->next)
+			if (c->isfullscreen && ISVISIBLE(c))
+				setfullscreen(c, 0);
 	}
+	arrange(selmon);
 }
