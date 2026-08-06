@@ -122,6 +122,7 @@ enum {
 enum {
 	ClientFields,
 	ClientTags,
+	ClientScroller,
 	ClientLast
 }; /* dwm client atoms */
 
@@ -405,6 +406,7 @@ static int lrpad;            /* sum of left and right padding for text */
  * internally to ignore such configure requests while movemouse or resizemouse are being used. */
 static int ignoreconfigurerequests = 0;
 static int grabfailed = 0;
+static int scanning = 0;    /* adopting existing windows at startup */
 static int (*xerrorxlib)(Display *, XErrorEvent *);
 static unsigned int numlockmask = 0;
 static void (*handler[LASTEvent]) (XEvent *) = {
@@ -1660,7 +1662,8 @@ manage(Window w, XWindowAttributes *wa)
 	}
 	attachx(c);
 	attachstack(c);
-	insertcolumn(c);
+	if (!getclientscroller(c))
+		insertcolumn(c);
 	XChangeProperty(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend,
 		(unsigned char *) &(c->win), 1);
 	XMoveResizeWindow(dpy, c->win, c->x + 2 * sw, c->y, c->w, c->h); /* some windows require this */
@@ -2030,6 +2033,10 @@ scan(void)
 	Window d1, d2, *wins = NULL;
 	XWindowAttributes wa;
 
+	/* Restored column indices only make sense once every window is back.
+	 * Adopting them one at a time would let normalizecols() compact each
+	 * one against a half-populated list and scramble the grouping. */
+	scanning = 1;
 	if (XQueryTree(dpy, root, &d1, &d2, &wins, &num)) {
 		for (i = 0; i < num; i++) {
 			if (!XGetWindowAttributes(dpy, wins[i], &wa)
@@ -2047,6 +2054,9 @@ scan(void)
 		}
 		XFree(wins);
 	}
+	scanning = 0;
+	arrange(NULL);
+	focus(NULL);
 }
 
 void
@@ -2220,6 +2230,7 @@ setup(void)
 	wmatom[WMTakeFocus] = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
 	clientatom[ClientFields] = XInternAtom(dpy, "_DWM_CLIENT_FIELDS", False);
 	clientatom[ClientTags] = XInternAtom(dpy, "_DWM_CLIENT_TAGS", False);
+	clientatom[ClientScroller] = XInternAtom(dpy, "_DWM_CLIENT_SCROLLER", False);
 	netatom[NetActiveWindow] = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
 	netatom[NetSupported] = XInternAtom(dpy, "_NET_SUPPORTED", False);
 	netatom[NetSystemTray] = XInternAtom(dpy, "_NET_SYSTEM_TRAY_S0", False);

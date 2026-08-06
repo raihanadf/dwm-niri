@@ -25,6 +25,7 @@ persistclientstate(Client *c)
 {
 	setclienttags(c);
 	setclientfields(c);
+	setclientscroller(c);
 }
 
 int

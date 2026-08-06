@@ -45,6 +45,9 @@ normalizecols(Monitor *m)
 	Client *c;
 	int cols[64], n = 0, i, j, t;
 
+	if (scanning)
+		return; /* indices are still being restored; see scan() */
+
 	for (c = nextcol(m->clients); c; c = nextcol(c->next)) {
 		if (!ISVISIBLE(c))
 			continue;
@@ -246,6 +249,50 @@ syncfullscreen(Monitor *m, Client *sel)
 			setfullscreen(c, 0); /* wantfullscreen stays set */
 	}
 	syncing = 0;
+}
+
+/* Column layout across a restart.
+ *
+ * seamless_restart's client word is full of flags for patches this build does
+ * not have, so rather than squat on those bits the scroller keeps its own
+ * property. Widths are stored as hundredths, which is finer than anything the
+ * keys can produce.
+ *
+ * |0000000|00000000|0|00000000
+ * |       |        | |-- col
+ * |       |        |-- wantfullscreen
+ * |       |-- cwfact * 100
+ * |-- oldcwfact * 100
+ */
+void
+setclientscroller(Client *c)
+{
+	uint32_t data[] = {
+		(c->col & 0xFF)
+		| (c->wantfullscreen & 0x1) << 8
+		| ((uint32_t)(c->cwfact * 100) & 0xFF) << 9
+		| ((uint32_t)(c->oldcwfact * 100) & 0xFF) << 17
+	};
+
+	XChangeProperty(dpy, c->win, clientatom[ClientScroller], XA_CARDINAL, 32,
+		PropModeReplace, (unsigned char *)data, 1);
+}
+
+int
+getclientscroller(Client *c)
+{
+	Atom v = getatomprop(c, clientatom[ClientScroller], AnyPropertyType);
+	unsigned int f;
+
+	if (v == None)
+		return 0;
+	c->col = v & 0xFF;
+	c->wantfullscreen = (v >> 8) & 0x1;
+	f = (v >> 9) & 0xFF;
+	c->cwfact = f ? f / 100.0 : colfacts[1];
+	f = (v >> 17) & 0xFF;
+	c->oldcwfact = f / 100.0;
+	return 1;
 }
 
 void

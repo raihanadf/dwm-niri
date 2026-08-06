@@ -15,6 +15,8 @@ static void dropfullscreen(Monitor *m, Client *keep);
 static void scrolltocol(Monitor *m, int col);
 static Client *colclient(Monitor *m, int col);
 static void insertcolumn(Client *c);
+static void setclientscroller(Client *c);
+static int getclientscroller(Client *c);
 static void focuscol(const Arg *arg);
 static void focusincol(const Arg *arg);
 static void movecol(const Arg *arg);
