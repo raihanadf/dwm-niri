@@ -1,0 +1,9 @@
+# build output
+*.o
+dwm
+dwm-msg
+
+# packaging
+pkg/*
+*.pkg.tar.xz
+machine.h
