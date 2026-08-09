@@ -1,19 +1,16 @@
-struct Pertag {
-	unsigned int curtag, prevtag; /* current and previous tag */
-	int nmasters[NUMTAGS + 1]; /* number of windows in master area */
-	const Layout *ltidxs[NUMTAGS + 1][2]; /* matrix of tags and layouts indexes  */
-	float mfacts[NUMTAGS + 1]; /* mfacts per tag */
-	unsigned int sellts[NUMTAGS + 1]; /* selected layouts */
-	Client *prevzooms[NUMTAGS + 1]; /* store zoom information */
-	int enablegaps[NUMTAGS + 1];
-	unsigned int gaps[NUMTAGS + 1];
-};
-
 void
 pertagview(const Arg *arg)
 {
 	int i;
 	unsigned int tmptag;
+
+	/* Each workspace keeps its own place on the strip. scroller() recomputes
+	 * the offset from the focused column on every arrange, so this only shows
+	 * on a workspace with nothing to focus -- but the overview and the minimap
+	 * read scrollx directly, and an empty workspace inheriting the offset of
+	 * the one before it draws them somewhere they do not belong. */
+	selmon->pertag->scrollxs[selmon->pertag->curtag] = selmon->scrollx;
+
 	if (arg->ui & TAGMASK) {
 		selmon->pertag->prevtag = selmon->pertag->curtag;
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
@@ -39,5 +36,6 @@ pertagview(const Arg *arg)
 	selmon->gappih = (selmon->pertag->gaps[selmon->pertag->curtag] & 0xff0000) >> 16;
 	selmon->gappiv = (selmon->pertag->gaps[selmon->pertag->curtag] & 0xff000000) >> 24;
 
+	selmon->scrollx = selmon->pertag->scrollxs[selmon->pertag->curtag];
 }
 

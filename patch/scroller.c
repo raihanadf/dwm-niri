@@ -594,6 +594,189 @@ scrolltogglefloating(const Arg *arg)
 	}
 }
 
+/* Workspaces.
+ *
+ * niri stacks workspaces vertically: the strip scrolls left and right, and the
+ * workspaces you move between run up and down. dwm's tags are a bitmask rather
+ * than a list, but the pertag patch already keeps a linear index for the single
+ * tag in view -- m->pertag->curtag, 1..NUMTAGS -- and that is exactly the
+ * stack. Everything below treats it as one, so h/l and j/k are two axes of the
+ * same space rather than two unrelated concepts.
+ *
+ * Column indices come out per-workspace for free: colcount(), colclient() and
+ * normalizecols() all filter on ISVISIBLE, so every workspace numbers its own
+ * columns 0..n-1 and a window arriving from elsewhere only has to be handed an
+ * index in the numbering it is joining.
+ */
+
+/* One past the last workspace holding anything. niri creates and discards
+ * workspaces as you use them, always keeping one empty at the bottom; a fixed
+ * bitmask cannot grow, but stopping navigation here gives the same feel -- you
+ * can always step down into a fresh workspace, and you never wade through eight
+ * empty ones on the way back up. */
+int
+lastworkspace(Monitor *m)
+{
+	Client *c;
+	int i, last = 0;
+
+	for (c = m->clients; c; c = c->next)
+		for (i = NUMTAGS; i > last; i--)
+			if (c->tags & (1 << (i - 1))) {
+				last = i;
+				break;
+			}
+	if (!last)
+		return 1; /* nothing anywhere: one workspace, and it is empty */
+	return MIN(last + 1, NUMTAGS);
+}
+
+/* How many workspaces the bar draws: everything reachable by j/k, plus the one
+ * in view if you jumped past the end of that by number. The rest do not exist
+ * yet as far as niri is concerned, and drawing nine boxes when two are in use
+ * says otherwise. */
+int
+shownworkspaces(Monitor *m)
+{
+	return MAX(lastworkspace(m), (int)m->pertag->curtag);
+}
+
+/* Resolve a direction into a workspace index, or 0 when there is nowhere to go.
+ * Navigation clamps rather than wraps: the stack has a top and a bottom, and
+ * falling off one end into the other loses you your place. */
+static int
+workspacetarget(Monitor *m, int dir)
+{
+	int cur = m->pertag->curtag, want;
+
+	if (cur < 1)
+		cur = 1; /* the view-all pseudo-tag; treat it as the first */
+	want = cur + dir;
+	if (want < 1 || want > MAX(lastworkspace(m), cur))
+		return 0;
+	return want;
+}
+
+void
+focusworkspace(const Arg *arg)
+{
+	int t = workspacetarget(selmon, arg->i);
+
+	if (t)
+		view(&((Arg) { .ui = 1 << (t - 1) }));
+}
+
+/* Move the focused window -- or its whole column -- to workspace t, and follow
+ * it there.
+ *
+ * It lands at the same column index it held on the workspace it left, clamped
+ * to the end of the destination strip. Push a window down and it stays roughly
+ * under your eye instead of reappearing at some far edge, which is the whole
+ * point of the two axes lining up.
+ */
+static void
+sendtoworkspace(int t, int wholecol)
+{
+	Monitor *m = selmon;
+	Client *c, *sel = m->sel;
+	unsigned int tags;
+	int srccol, want, cols[64], n = 0, i, j, tmp;
+
+	if (!sel || t < 1 || t > NUMTAGS)
+		return;
+	tags = 1 << (t - 1);
+	if (sel->tags == tags)
+		return;
+
+	/* A floating window has no column to preserve; it just changes hands. */
+	if (sel->isfloating && !sel->isfullscreen) {
+		sel->tags = tags;
+		sel->switchtag = 0;
+		view(&((Arg) { .ui = tags }));
+		focus(sel);
+		arrange(m);
+		return;
+	}
+	srccol = sel->col;
+
+	/* Distinct column indices already on the destination. It is not the
+	 * workspace in view, so normalizecols() has not touched it and these may
+	 * be anything at all -- only their order carries meaning. */
+	for (c = m->clients; c; c = c->next) {
+		if (!(c->tags & tags) || (c->isfloating && !c->isfullscreen))
+			continue;
+		for (i = 0; i < n && cols[i] != c->col; i++);
+		if (i == n && n < (int)LENGTH(cols))
+			cols[n++] = c->col;
+	}
+	for (i = 0; i < n; i++)
+		for (j = i + 1; j < n; j++)
+			if (cols[j] < cols[i]) { tmp = cols[i]; cols[i] = cols[j]; cols[j] = tmp; }
+
+	want = MIN(srccol, n);
+
+	/* Compact the destination to 0..n-1 and open a gap at `want`. Without the
+	 * gap the arrival would share an index with a column that is already
+	 * there, and normalizecols() would read that as one column holding two
+	 * windows -- a merge, not a move. Two passes through negative values, as
+	 * in normalizecols(), so renumbering cannot collide with an index that
+	 * has not been visited yet. */
+	for (c = m->clients; c; c = c->next) {
+		if (!(c->tags & tags) || (c->isfloating && !c->isfullscreen))
+			continue;
+		for (i = 0; i < n; i++)
+			if (cols[i] == c->col) {
+				c->col = -((i < want ? i : i + 1) + 1);
+				break;
+			}
+	}
+	for (c = m->clients; c; c = c->next)
+		if ((c->tags & tags) && c->col < 0)
+			c->col = -c->col - 1;
+
+	/* Take the window, or everything stacked in its column with it. Tested
+	 * against the source workspace, which is still the one in view. */
+	for (c = m->clients; c; c = c->next) {
+		if (!ISVISIBLE(c) || (c->isfloating && !c->isfullscreen))
+			continue;
+		if (c != sel && !(wholecol && c->col == srccol))
+			continue;
+		c->tags = tags;
+		c->switchtag = 0;
+		c->col = want;
+	}
+
+	/* The gap left behind on the source closes when it is next arranged. */
+	view(&((Arg) { .ui = tags }));
+	focus(sel);
+	arrange(m);
+}
+
+void
+movetoworkspace(const Arg *arg)
+{
+	sendtoworkspace(workspacetarget(selmon, arg->i), 0);
+}
+
+void
+movecoltoworkspace(const Arg *arg)
+{
+	sendtoworkspace(workspacetarget(selmon, arg->i), 1);
+}
+
+/* dwm's tag(), but landing where the directional keys would put it and taking
+ * you along, so that Shift+2 and Shift+j differ only in where they stop. */
+void
+tagworkspace(const Arg *arg)
+{
+	int i;
+
+	if (!(arg->ui & TAGMASK))
+		return;
+	for (i = 0; !(arg->ui & 1 << i); i++);
+	sendtoworkspace(i + 1, 0);
+}
+
 /* Layout-aware wrappers, so one keymap serves both the scroller and the
  * ordinary layouts. */
 void

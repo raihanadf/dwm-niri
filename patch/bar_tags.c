@@ -1,9 +1,9 @@
 int
 width_tags(Bar *bar, BarArg *a)
 {
-	int w, i;
+	int w, i, n = shownworkspaces(bar->mon);
 
-	for (w = 0, i = 0; i < NUMTAGS; i++) {
+	for (w = 0, i = 0; i < n; i++) {
 		w += TEXTW(tagicon(bar->mon, i));
 	}
 	return w;
@@ -24,7 +24,7 @@ draw_tags(Bar *bar, BarArg *a)
 		if (c->isurgent)
 			urg |= c->tags;
 	}
-	for (i = 0; i < NUMTAGS; i++) {
+	for (i = 0; i < (unsigned int)shownworkspaces(m); i++) {
 
 		icon = tagicon(bar->mon, i);
 		invert = 0;
@@ -49,12 +49,12 @@ draw_tags(Bar *bar, BarArg *a)
 int
 click_tags(Bar *bar, Arg *arg, BarArg *a)
 {
-	int i = 0, x = 0;
+	int i = 0, x = 0, n = shownworkspaces(bar->mon);
 
 	do {
 		x += TEXTW(tagicon(bar->mon, i));
-	} while (a->x >= x && ++i < NUMTAGS);
-	if (i < NUMTAGS) {
+	} while (a->x >= x && ++i < n);
+	if (i < n) {
 		arg->ui = 1 << i;
 	}
 	return ClkTagBar;
