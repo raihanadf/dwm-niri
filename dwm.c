@@ -632,6 +632,10 @@ buttonpress(XEvent *e)
 	BarArg carg = { 0, 0, 0, 0 };
 	click = ClkRootWin;
 
+	/* the overview covers the screen and is not a client, so it has to be
+	 * offered the click before the usual lookups find nothing */
+	if (overviewclick(ev))
+		return;
 
 	/* focus monitor if necessary */
 	if ((m = wintomon(ev->window)) && m != selmon

@@ -777,6 +777,76 @@ tagworkspace(const Arg *arg)
 	sendtoworkspace(i + 1, 0);
 }
 
+/* Lay out an arbitrary workspace the way scroller() would, in strip
+ * coordinates: x from the left end of the strip, y from the top of the work
+ * area, with the scroll offset left out.
+ *
+ * The windows are not touched, and deliberately not consulted either. A
+ * workspace that is not in view has stale geometry -- showhide() only shoves
+ * its windows aside, and a window moved there has not been arranged since --
+ * so anything wanting to draw a workspace it is not looking at has to work the
+ * layout out rather than read it off the clients.
+ *
+ * Pass max = 0 to measure a workspace without listing it.
+ */
+int
+stripgeom(Monitor *m, unsigned int tags, StripItem *out, int max, int *total)
+{
+	Client *c;
+	unsigned int dummy;
+	int cols[64], ncols = 0, n = 0, i, j, t;
+	int oh, ov, ih, iv, x = 0, y, cw, nin, hh, rest;
+	float f;
+
+	getgaps(m, &oh, &ov, &ih, &iv, &dummy);
+	*total = 0;
+
+	for (c = m->clients; c; c = c->next) {
+		if (!ONSTRIP(c, tags))
+			continue;
+		for (i = 0; i < ncols && cols[i] != c->col; i++);
+		if (i == ncols && ncols < (int)LENGTH(cols))
+			cols[ncols++] = c->col;
+	}
+	for (i = 0; i < ncols; i++)
+		for (j = i + 1; j < ncols; j++)
+			if (cols[j] < cols[i]) { t = cols[i]; cols[i] = cols[j]; cols[j] = t; }
+
+	for (i = 0; i < ncols; i++) {
+		f = 0;
+		for (c = m->clients; c; c = c->next)
+			if (ONSTRIP(c, tags) && c->col == cols[i]) { f = c->cwfact; break; }
+		cw = MAX((int)((m->ww - 2 * ov) * (f > 0 ? f : colfacts[1])), bh);
+
+		for (nin = 0, c = m->clients; c; c = c->next)
+			if (ONSTRIP(c, tags) && c->col == cols[i] && !c->isfullscreen)
+				nin++;
+
+		if (nin) {
+			hh = (m->wh - 2 * oh - ih * (nin - 1)) / nin;
+			rest = (m->wh - 2 * oh - ih * (nin - 1)) - hh * nin;
+			y = 0;
+			for (c = m->clients; c; c = c->next) {
+				if (!ONSTRIP(c, tags) || c->col != cols[i] || c->isfullscreen)
+					continue;
+				if (n < max) {
+					out[n].c = c;
+					out[n].x = x;
+					out[n].y = y;
+					out[n].w = cw;
+					out[n].h = hh + (rest > 0 ? 1 : 0);
+					n++;
+				}
+				y += hh + (rest > 0 ? 1 : 0) + ih;
+				rest--;
+			}
+		}
+		x += cw + iv;
+	}
+	*total = x > 0 ? x - iv : 0;
+	return n;
+}
+
 /* Layout-aware wrappers, so one keymap serves both the scroller and the
  * ordinary layouts. */
 void
