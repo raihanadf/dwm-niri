@@ -584,6 +584,7 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 void
 arrange(Monitor *m)
 {
+	animsnapshot(m); /* where everything is, before the layout moves it */
 	if (m)
 		showhide(m->stack);
 	else for (m = mons; m; m = m->next)
@@ -593,6 +594,9 @@ arrange(Monitor *m)
 		restack(m);
 	} else for (m = mons; m; m = m->next)
 		arrangemon(m);
+	/* m is NULL here when every monitor was arranged, which is what
+	 * animlaunch() wants to hear anyway */
+	animlaunch(m);
 }
 
 void
@@ -1886,6 +1890,7 @@ void
 resizeclient(Client *c, int x, int y, int w, int h)
 {
 	XWindowChanges wc;
+	int ax, ay;
 
 	c->oldx = c->x; c->x = x;
 	c->oldy = c->y; c->y = y;
@@ -1893,8 +1898,12 @@ resizeclient(Client *c, int x, int y, int w, int h)
 	c->oldh = c->h; c->h = wc.height = h;
 
 	updateclientparent(c);
-	wc.x = CONTAINERX(c, c->x);
-	wc.y = CONTAINERY(c, c->y);
+	/* the size lands now; the position may still be on its way there */
+	ax = c->x;
+	ay = c->y;
+	animoverride(c, &ax, &ay);
+	wc.x = CONTAINERX(c, ax);
+	wc.y = CONTAINERY(c, ay);
 	wc.border_width = c->bw;
 	XConfigureWindow(dpy, c->win, CWX|CWY|CWWidth|CWHeight|CWBorderWidth, &wc);
 	configure(c);
@@ -2037,13 +2046,41 @@ void
 run(void)
 {
 	XEvent ev;
-	/* main event loop */
+	fd_set rfds;
+	struct timeval tv, *timeout;
+	int fd = ConnectionNumber(dpy);
+
+	/* Main event loop.
+	 *
+	 * Blocking in XNextEvent is right whenever nothing is moving, but an
+	 * animation needs waking on a deadline rather than on an event. Wait on
+	 * the connection instead: with a frame's timeout while there is motion to
+	 * draw, and indefinitely otherwise, which is exactly the old behaviour.
+	 * Input is never held up by an animation -- a keystroke arriving mid-flight
+	 * cuts the wait short and retargets it. */
 	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev)) {
+	while (running) {
+		/* XPending flushes first, so our own frame lands before we wait */
+		while (running && XPending(dpy)) {
+			XNextEvent(dpy, &ev);
+			if (handler[ev.type])
+				handler[ev.type](&ev); /* call handler */
+		}
+		if (!running)
+			break;
 
+		if (animstep()) {
+			XFlush(dpy);
+			tv.tv_sec = 0;
+			tv.tv_usec = 1000000 / (animfps ? animfps : 60);
+			timeout = &tv;
+		} else
+			timeout = NULL;
 
-		if (handler[ev.type])
-			handler[ev.type](&ev); /* call handler */
+		FD_ZERO(&rfds);
+		FD_SET(fd, &rfds);
+		if (select(fd + 1, &rfds, NULL, NULL, timeout) < 0 && errno != EINTR)
+			break;
 	}
 }
 
@@ -2330,9 +2367,13 @@ showhide(Client *c)
 	if (!c)
 		return;
 	if (ISVISIBLE(c)) {
+		int sx = c->x, sy = c->y;
 		/* show clients top down */
 		updateclientparent(c);
-		XMoveWindow(dpy, c->win, CONTAINERX(c, c->x), CONTAINERY(c, c->y));
+		/* a window already in flight keeps its place in the air, rather than
+		 * being snapped to the target it has not reached yet */
+		animoverride(c, &sx, &sy);
+		XMoveWindow(dpy, c->win, CONTAINERX(c, sx), CONTAINERY(c, sy));
 		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating)
 			&& !c->isfullscreen
 			)
@@ -2533,7 +2574,7 @@ unmanage(Client *c, int destroyed)
 	unsigned int switchtag = c->switchtag;
 	XWindowChanges wc;
 
-
+	animforget(c); /* the animation table holds pointers; this one is going */
 	detach(c);
 	detachstack(c);
 	if (!destroyed) {

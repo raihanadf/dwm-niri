@@ -244,6 +244,18 @@ static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen win
 
 
 
+/* Animation. There is no compositor, so this is a timer walking the windows
+ * from where they were to where the layout put them -- positions only, since
+ * animating size would make every client reflow on every frame.
+ *
+ * animduration is how long a movement takes in milliseconds; shorter reads as
+ * responsive, longer as floaty, and much past 200 starts to feel like waiting.
+ * animminpx is the movement below which it is not worth a frame at all. */
+static const int animated           = 1;   /* 0 turns it off entirely */
+static const unsigned int animduration = 130; /* ms per movement */
+static const unsigned int animfps    = 90; /* frames per second while moving */
+static const int animminpx           = 6;  /* ignore movements smaller than this */
+
 /* The scroller is the only layout: there is nothing to switch to, so nothing
  * switches layouts and the bar has no symbol to show. Windows can still float
  * one at a time, which is what niri does too -- what is gone is floating as a
