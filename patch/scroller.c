@@ -317,27 +317,38 @@ focuscol(const Arg *arg)
 	}
 }
 
-void
-focusincol(const Arg *arg)
+/* The window above or below the focused one inside its own column, or NULL at
+ * either end of the stack -- which is also the answer for a column of one. */
+Client *
+colneighbour(Monitor *m, int dir)
 {
-	Monitor *m = selmon;
-	Client *c, *prev = NULL, *target = NULL;
+	Client *c, *prev = NULL;
 	int col;
 
-	if (!m->sel)
-		return;
+	if (!m->sel || (m->sel->isfloating && !m->sel->isfullscreen))
+		return NULL; /* a floater has no column to be in the middle of */
 	col = m->sel->col;
 
 	for (c = nextcol(m->clients); c; c = nextcol(c->next)) {
 		if (!ISVISIBLE(c) || c->col != col)
 			continue;
-		if (arg->i > 0 && prev == m->sel) { target = c; break; }
-		if (arg->i < 0 && c == m->sel) { target = prev; break; }
+		if (dir > 0 && prev == m->sel)
+			return c;
+		if (dir < 0 && c == m->sel)
+			return prev;
 		prev = c;
 	}
+	return NULL;
+}
+
+void
+focusincol(const Arg *arg)
+{
+	Client *target = colneighbour(selmon, arg->i);
+
 	if (target) {
 		focus(target);
-		arrange(m);
+		arrange(selmon);
 	}
 }
 
@@ -657,12 +668,30 @@ workspacetarget(Monitor *m, int dir)
 	return want;
 }
 
+/* Down and up, whatever that happens to mean where you are standing.
+ *
+ * A column holding more than one window is itself a vertical list, and these
+ * are the vertical keys, so they walk the stack first and only step to the next
+ * workspace off the end of it. One pair of keys then covers everything below
+ * you: the rest of the column, then the workspace under it. A column of one has
+ * no stack to walk, so it goes straight to the workspace and the distinction
+ * never comes up.
+ *
+ * focusincol() stays bound separately for when you want to move inside a column
+ * without the risk of falling out of it. */
 void
 focusworkspace(const Arg *arg)
 {
-	int t = workspacetarget(selmon, arg->i);
+	Monitor *m = selmon;
+	Client *c;
+	int t;
 
-	if (t)
+	if ((c = colneighbour(m, arg->i))) {
+		focus(c);
+		arrange(m);
+		return;
+	}
+	if ((t = workspacetarget(m, arg->i)))
 		view(&((Arg) { .ui = 1 << (t - 1) }));
 }
 

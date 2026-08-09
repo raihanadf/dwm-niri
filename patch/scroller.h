@@ -18,6 +18,7 @@ static void insertcolumn(Client *c);
 static void setclientscroller(Client *c);
 static int getclientscroller(Client *c);
 static void focuscol(const Arg *arg);
+static Client *colneighbour(Monitor *m, int dir);
 static void focusincol(const Arg *arg);
 static void movecol(const Arg *arg);
 static void listswap(Monitor *m, Client *a, Client *b);
