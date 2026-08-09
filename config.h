@@ -232,7 +232,6 @@ static const BarRule barrules[] = {
 	{ -1,        0,     BAR_ALIGN_LEFT,   width_stbutton,           draw_stbutton,          click_stbutton,          NULL,                    "statusbutton" },
 	{ -1,        0,     BAR_ALIGN_LEFT,   width_tags,               draw_tags,              click_tags,              hover_tags,              "tags" },
 	{  0,        0,     BAR_ALIGN_RIGHT,  width_systray,            draw_systray,           click_systray,           NULL,                    "systray" },
-	{ -1,        0,     BAR_ALIGN_LEFT,   width_ltsymbol,           draw_ltsymbol,          click_ltsymbol,          NULL,                    "layout" },
 	{ statusmon, 0,     BAR_ALIGN_RIGHT,  width_status2d,           draw_status2d,          click_status2d,          NULL,                    "status2d" },
 	{ -1,        0,     BAR_ALIGN_NONE,   width_awesomebar,         draw_awesomebar,        click_awesomebar,        NULL,                    "awesomebar" },
 };
@@ -245,27 +244,23 @@ static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen win
 
 
 
+/* The scroller is the only layout: there is nothing to switch to, so nothing
+ * switches layouts and the bar has no symbol to show. Windows can still float
+ * one at a time, which is what niri does too -- what is gone is floating as a
+ * mode the whole workspace can be in. */
 static const Layout layouts[] = {
-	/* symbol     arrange function */
-  /* first entry is default */
-	{ "[]=",      tile },    
-	{ "><>",      NULL },    /* no layout function means floating behavior */
-	// { "[M]",      monocle },
-	{ "[D]",      deck },
-	// { "[\\]",     dwindle },
-	{ "---",      horizgrid },
 	{ "|||",      scroller },
-	{ NULL,       NULL },
 };
 
 
 /* key definitions */
 #define MODKEY Mod1Mask
+/* One workspace is in view at a time and a window lives on exactly one of them,
+ * so the combo and toggle bindings are gone: there is no set to add to. Shift
+ * takes the window along and follows it, the same as Shift+j/k. */
 #define TAGKEYS(KEY,TAG) \
-	{ MODKEY,                       KEY,      comboview,      {.ui = 1 << TAG} }, \
-	{ MODKEY|ControlMask,           KEY,      toggleview,     {.ui = 1 << TAG} }, \
-	{ MODKEY|ShiftMask,             KEY,      combotag,       {.ui = 1 << TAG} }, \
-	{ MODKEY|ControlMask|ShiftMask, KEY,      toggletag,      {.ui = 1 << TAG} },
+	{ MODKEY,                       KEY,      view,           {.ui = 1 << TAG} }, \
+	{ MODKEY|ShiftMask,             KEY,      tagworkspace,   {.ui = 1 << TAG} },
 
 
 
@@ -294,15 +289,21 @@ static Key keys[] = {
 	{ MODKEY,                       XK_p,          spawn,                  {.v = roficmd } },
 	{ MODKEY|ShiftMask,             XK_Return,     spawn,                  {.v = termcmd } },
 	{ MODKEY,                       XK_b,          togglebar,              {0} },
-	{ MODKEY,                       XK_j,          scrollfocusstack,       {.i = +1 } },
-	{ MODKEY,                       XK_k,          scrollfocusstack,       {.i = -1 } },
-	{ MODKEY,                       XK_i,          incnmaster,             {.i = +1 } },
-	{ MODKEY,                       XK_d,          incnmaster,             {.i = -1 } },
+	/* Two axes of one space. h/l run along the strip, j/k run up and down the
+	 * workspace stack, and Shift takes the focused window with you either way.
+	 * Ctrl is the third, smaller axis: within a column. */
 	{ MODKEY,                       XK_h,          scrollfocus,            {.i = -1 } },
 	{ MODKEY,                       XK_l,          scrollfocus,            {.i = +1 } },
 	{ MODKEY|ShiftMask,             XK_h,          scrollmove,             {.i = -1 } },
 	{ MODKEY|ShiftMask,             XK_l,          scrollmove,             {.i = +1 } },
-	{ MODKEY,                       XK_s,          setlayout,              {.v = &layouts[4]} },
+	{ MODKEY,                       XK_j,          focusworkspace,         {.i = +1 } },
+	{ MODKEY,                       XK_k,          focusworkspace,         {.i = -1 } },
+	{ MODKEY|ShiftMask,             XK_j,          movetoworkspace,        {.i = +1 } },
+	{ MODKEY|ShiftMask,             XK_k,          movetoworkspace,        {.i = -1 } },
+	{ MODKEY|ControlMask,           XK_j,          scrollfocusstack,       {.i = +1 } },
+	{ MODKEY|ControlMask,           XK_k,          scrollfocusstack,       {.i = -1 } },
+	{ MODKEY|ControlMask|ShiftMask, XK_j,          movecoltoworkspace,     {.i = +1 } },
+	{ MODKEY|ControlMask|ShiftMask, XK_k,          movecoltoworkspace,     {.i = -1 } },
 	{ MODKEY,                       XK_w,          maximizecol,            {0} },
 	{ MODKEY|ShiftMask,             XK_m,          toggleminimap,          {0} },
 	{ MODKEY,                       XK_o,          toggleoverview,         {0} },
@@ -338,19 +339,11 @@ static Key keys[] = {
 	{ MODKEY|ShiftMask,             XK_c,          killclient,             {0} },
 	{ MODKEY|ShiftMask,             XK_q,          quit,                   {0} },
 	{ MODKEY|ControlMask|ShiftMask, XK_q,          quit,                   {1} },
-	{ MODKEY,                       XK_t,          setlayout,              {.v = &layouts[0]} },
-	{ MODKEY,                       XK_f,          setlayout,              {.v = &layouts[1]} },
-	{ MODKEY,                       XK_m,          setlayout,              {.v = &layouts[2]} },
-	{ MODKEY,                       XK_space,      setlayout,              {0} },
 	{ MODKEY|ShiftMask,             XK_space,      scrolltogglefloating,   {0} },
-	{ MODKEY,                       XK_0,          view,                   {.ui = ~0 } },
-	{ MODKEY|ShiftMask,             XK_0,          tag,                    {.ui = ~0 } },
 	{ MODKEY,                       XK_comma,      focusmon,               {.i = -1 } },
 	{ MODKEY,                       XK_period,     focusmon,               {.i = +1 } },
 	{ MODKEY|ShiftMask,             XK_comma,      tagmon,                 {.i = -1 } },
 	{ MODKEY|ShiftMask,             XK_period,     tagmon,                 {.i = +1 } },
-	{ MODKEY|ControlMask,           XK_comma,      cyclelayout,            {.i = -1 } },
-	{ MODKEY|ControlMask,           XK_period,     cyclelayout,            {.i = +1 } },
 	{ Mod4Mask,                       XK_F5,     xrdb,           {.v = NULL } },
 	TAGKEYS(                        XK_1,                                  0)
 	TAGKEYS(                        XK_2,                                  1)
@@ -369,8 +362,6 @@ static Key keys[] = {
 static Button buttons[] = {
 	/* click                event mask           button          function        argument */
 	{ ClkButton,            0,                   Button1,        spawn,          {.v = roficmd } },
-	{ ClkLtSymbol,          0,                   Button1,        setlayout,      {0} },
-	{ ClkLtSymbol,          0,                   Button3,        setlayout,      {.v = &layouts[2]} },
 	{ ClkWinTitle,          0,                   Button1,        togglewin,      {0} },
 	{ ClkWinTitle,          0,                   Button3,        showhideclient, {0} },
 	{ ClkWinTitle,          0,                   Button2,        zoom,           {0} },
@@ -379,9 +370,7 @@ static Button buttons[] = {
 	{ ClkClientWin,         MODKEY,              Button2,        togglefloating, {0} },
 	{ ClkClientWin,         MODKEY,              Button3,        resizemouse,    {0} },
 	{ ClkTagBar,            0,                   Button1,        view,           {0} },
-	{ ClkTagBar,            0,                   Button3,        toggleview,     {0} },
-	{ ClkTagBar,            MODKEY,              Button1,        tag,            {0} },
-	{ ClkTagBar,            MODKEY,              Button3,        toggletag,      {0} },
+	{ ClkTagBar,            MODKEY,              Button1,        tagworkspace,   {0} },
 };
 
 
