@@ -26,6 +26,22 @@ static int animrunning = 0;
 static int animpending = 0; /* between the snapshot and the launch */
 static struct timespec animt0;
 
+/* Workspace changes need to know who was on screen a moment ago, because by the
+ * time the layout runs the tag has already changed and the old set is no longer
+ * visible to anything that asks. */
+static struct { Client *c; int x, y; } animprev[MAXANIM];
+static int nanimprev = 0;
+static int slidedir = 0;         /* +1 leaving downwards, -1 upwards, 0 not a slide */
+static Monitor *slidemon = NULL;
+
+/* Put a window away where showhide() would have: off to the side, still mapped,
+ * costing nothing until its workspace comes back. */
+static void
+animpark(Client *c)
+{
+	XMoveWindow(dpy, c->win, WIDTH(c) * -2, CONTAINERY(c, c->y));
+}
+
 static long
 animelapsed(void)
 {
@@ -73,10 +89,86 @@ animoverride(Client *c, int *x, int *y)
 
 	if (!animpending)
 		return 0;
-	for (i = 0; i < nanim; i++)
-		if (anims[i].c == c) {
+	for (i = 0; i < nanim; i++) {
+		if (anims[i].c != c)
+			continue;
+		if (anims[i].kind == AnimIn) {
+			/* resizeclient() has already written the destination into the
+			 * client, so this is the arriving window's starting point: a
+			 * screen away, on the side we are coming from. */
+			*x = c->x;
+			*y = c->y + slidedir * slidemon->wh;
+		} else {
 			*x = anims[i].cx;
 			*y = anims[i].cy;
+		}
+		return 1;
+	}
+	return 0;
+}
+
+/* showhide() is about to park a window that has left the workspace. If it is
+ * sliding out, it needs to stay where the animation has it until the movement
+ * finishes -- parking it now would make the old workspace vanish rather than
+ * leave. */
+int
+animoutgoing(Client *c, int *x, int *y)
+{
+	int i;
+
+	if (!animrunning && !animpending)
+		return 0;
+	for (i = 0; i < nanim; i++)
+		if (anims[i].c == c && anims[i].kind == AnimOut) {
+			*x = anims[i].cx;
+			*y = anims[i].cy;
+			return 1;
+		}
+	return 0;
+}
+
+/* Remember where everything is while the outgoing workspace is still the one on
+ * screen. Called before the tag changes; animslidego() decides afterwards
+ * whether it was a movement worth animating. */
+void
+animslidecapture(Monitor *m)
+{
+	Client *c;
+
+	nanimprev = 0;
+	slidedir = 0;
+	slidemon = m;
+	if (animskip())
+		return;
+	for (c = m->clients; c; c = c->next) {
+		if (!ISVISIBLE(c) || c->isfloating || c->isfullscreen)
+			continue;
+		if (nanimprev >= MAXANIM)
+			break;
+		animprev[nanimprev].c = c;
+		animfrom(c, &animprev[nanimprev].x, &animprev[nanimprev].y);
+		nanimprev++;
+	}
+}
+
+void
+animslidego(Monitor *m, int dir)
+{
+	slidedir = dir > 0 ? 1 : dir < 0 ? -1 : 0;
+	slidemon = m;
+	if (!slidedir)
+		nanimprev = 0;
+}
+
+static int
+wasonscreen(Client *c, int *x, int *y)
+{
+	int i;
+
+	for (i = 0; i < nanimprev; i++)
+		if (animprev[i].c == c) {
+			*x = animprev[i].x;
+			*y = animprev[i].y;
 			return 1;
 		}
 	return 0;
@@ -112,18 +204,63 @@ animsnapshot(Monitor *m)
 			if (n >= MAXANIM)
 				break;
 			next[n].c = c;
-			animfrom(c, &next[n].fx, &next[n].fy);
+			next[n].kind = AnimMove;
+			if (slidedir && !wasonscreen(c, &next[n].fx, &next[n].fy)) {
+				/* not here a moment ago: it is arriving with the workspace */
+				next[n].kind = AnimIn;
+				next[n].fx = next[n].fy = 0; /* set once the layout has run */
+			} else
+				animfrom(c, &next[n].fx, &next[n].fy);
 			next[n].cx = next[n].fx;
 			next[n].cy = next[n].fy;
 			n++;
 		}
 	}
 
-	/* Anything that was moving and is not in the new set lands where the
-	 * layout already believes it is, rather than freezing part-way. */
+	/* Anything already on its way out keeps going. A layout can run again
+	 * mid-slide -- a focus change alone will do it -- and dropping these would
+	 * park them half-way, so the old workspace would vanish rather than
+	 * finish leaving. They resume from where they have got to. */
+	for (i = 0; i < nanim && n < MAXANIM; i++) {
+		if (anims[i].kind != AnimOut)
+			continue;
+		for (j = 0; j < n && next[j].c != anims[i].c; j++);
+		if (j < n)
+			continue;
+		next[n] = anims[i];
+		next[n].fx = anims[i].cx;
+		next[n].fy = anims[i].cy;
+		n++;
+	}
+
+	/* Whoever was on screen and is not any more leaves the way we came,
+	 * instead of blinking out. showhide() has already been told to leave them
+	 * alone; animstep() parks them when they are off the edge. */
+	if (slidedir)
+		for (i = 0; i < nanimprev && n < MAXANIM; i++) {
+			c = animprev[i].c;
+			for (j = 0; j < n && next[j].c != c; j++);
+			if (j < n || !c->mon || (m && c->mon != m))
+				continue;
+			next[n].c = c;
+			next[n].kind = AnimOut;
+			next[n].fx = next[n].cx = animprev[i].x;
+			next[n].fy = next[n].cy = animprev[i].y;
+			next[n].tx = animprev[i].x;
+			next[n].ty = animprev[i].y - slidedir * c->mon->wh;
+			n++;
+		}
+
+	/* Anything that was moving and is not in the new set lands where it
+	 * belongs rather than freezing part-way -- parked if it had already left
+	 * the workspace, since putting it back on screen would strand it there. */
 	for (i = 0; i < nanim; i++) {
 		for (j = 0; j < n && next[j].c != anims[i].c; j++);
-		if (j == n)
+		if (j < n)
+			continue;
+		if (anims[i].kind == AnimOut || !ISVISIBLE(anims[i].c))
+			animpark(anims[i].c);
+		else
 			animplace(anims[i].c, anims[i].c->x, anims[i].c->y);
 	}
 
@@ -150,12 +287,25 @@ animlaunch(Monitor *m)
 
 	for (i = 0; i < nanim; i++) {
 		c = anims[i].c;
+		if (anims[i].kind == AnimOut) {
+			/* target was fixed at snapshot time: a screen away, upwind */
+			anims[keep++] = anims[i];
+			continue;
+		}
 		/* Left the strip while the layout ran: showhide() has already put it
 		 * wherever it belongs, and it is not ours to move. */
 		if (!ISVISIBLE(c) || c->isfloating || c->isfullscreen)
 			continue;
 		anims[i].tx = c->x;
 		anims[i].ty = c->y;
+		if (anims[i].kind == AnimIn) {
+			anims[i].fx = c->x;
+			anims[i].fy = c->y + slidedir * c->mon->wh;
+			anims[i].cx = anims[i].fx;
+			anims[i].cy = anims[i].fy;
+			anims[keep++] = anims[i];
+			continue;
+		}
 		/* A window that barely moved is not worth a frame of anyone's time.
 		 * It was held back at its old position while the layout ran, so put
 		 * it where it actually belongs before dropping it. */
@@ -167,6 +317,12 @@ animlaunch(Monitor *m)
 		anims[keep++] = anims[i];
 	}
 	nanim = keep;
+	nanimprev = 0;
+	/* The slide is decided: every arriving window has its starting point and
+	 * every leaving one its destination. Clear the direction now, or the next
+	 * layout to run -- and a focus change alone will run one -- would read the
+	 * whole workspace as arriving all over again and restart the movement. */
+	slidedir = 0;
 
 	if (!nanim) {
 		animrunning = 0;
@@ -204,7 +360,12 @@ animstep(void)
 	}
 
 	if (t >= 1.0) {
-		/* e == 1 put everything exactly on its target already */
+		/* e == 1 put everything exactly on its target already. The ones that
+		 * left are now a screen off the edge; park them properly so they cost
+		 * nothing while their workspace is away. */
+		for (i = 0; i < nanim; i++)
+			if (anims[i].kind == AnimOut)
+				animpark(anims[i].c);
 		animrunning = 0;
 		nanim = 0;
 	}

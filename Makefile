@@ -5,6 +5,11 @@ include config.mk
 
 SRC = drw.c dwm.c util.c
 OBJ = ${SRC:.c=.o}
+# The patches are #included into dwm.c rather than compiled separately, so make
+# cannot see them as sources. Without listing them, editing one and rebuilding
+# quietly keeps the old object file and you debug a binary that does not
+# contain your change.
+PATCHSRC = $(wildcard patch/*.c patch/*.h)
 
 # FreeBSD users, prefix all ifdef, else and endif statements with a . for this to work (e.g. .ifdef)
 
@@ -23,7 +28,7 @@ options:
 .c.o:
 	${CC} -c ${CFLAGS} $<
 
-${OBJ}: config.h config.mk
+${OBJ}: config.h config.mk ${PATCHSRC}
 
 config.h:
 	cp config.def.h $@

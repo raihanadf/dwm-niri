@@ -85,6 +85,12 @@ a real `ConfigureNotify`, and a terminal asked to reflow 90 times a second is a
 bad price for a prettier resize. In a scrolling layout nearly all the motion is
 translation anyway.
 
+Moving between workspaces slides: the one you are leaving goes out the way you
+came while the new one rises into view behind it, so up and down are something
+you see rather than something you work out afterwards. The outgoing workspace
+has to be captured before the tag changes, because a moment later nothing can
+tell what was on screen.
+
 The event loop waits on the X connection rather than blocking in `XNextEvent`: a
 frame's timeout while something is moving, indefinitely otherwise. Input is
 never queued behind an animation — a keystroke arriving mid-flight cuts the wait

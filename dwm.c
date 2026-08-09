@@ -2070,12 +2070,18 @@ run(void)
 			break;
 
 		if (animstep()) {
-			XFlush(dpy);
 			tv.tv_sec = 0;
 			tv.tv_usec = 1000000 / (animfps ? animfps : 60);
 			timeout = &tv;
 		} else
 			timeout = NULL;
+
+		/* Unconditionally, and before the wait. The last step of an animation
+		 * is the one that puts the departed windows away, and it is also the
+		 * one after which there is nothing left to wake us -- flush only while
+		 * animating and that final request sits in the buffer until some
+		 * unrelated event happens to push it out. */
+		XFlush(dpy);
 
 		FD_ZERO(&rfds);
 		FD_SET(fd, &rfds);
@@ -2380,10 +2386,16 @@ showhide(Client *c)
 			resize(c, c->x, c->y, c->w, c->h, 0);
 		showhide(c->snext);
 	} else {
+		int ox, oy;
 		/* hide clients bottom up */
 		showhide(c->snext);
 		updateclientparent(c);
-		XMoveWindow(dpy, c->win, WIDTH(c) * -2, CONTAINERY(c, c->y));
+		/* a window on its way out stays where the animation has it until the
+		 * movement ends, or the old workspace would vanish rather than leave */
+		if (animoutgoing(c, &ox, &oy))
+			XMoveWindow(dpy, c->win, CONTAINERX(c, ox), CONTAINERY(c, oy));
+		else
+			XMoveWindow(dpy, c->win, WIDTH(c) * -2, CONTAINERY(c, c->y));
 	}
 }
 
@@ -2896,12 +2908,22 @@ updatewmhints(Client *c)
 void
 view(const Arg *arg)
 {
+	int from;
+
 	if ((arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
 	{
 		return;
 	}
+	/* Capture the outgoing workspace while it is still the one on screen:
+	 * a moment later the tag has changed and nothing can tell what was
+	 * there. */
+	from = selmon->pertag->curtag;
+	animslidecapture(selmon);
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	pertagview(arg);
+	/* Which way the stack moved, so the animation knows which edge the new
+	 * workspace comes in from and which one the old leaves by. */
+	animslidego(selmon, (int)selmon->pertag->curtag - from);
 	focus(NULL);
 	arrange(selmon);
 }
