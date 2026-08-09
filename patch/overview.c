@@ -36,7 +36,22 @@ compositeok(void)
 void
 redirectcontainer(Monitor *m)
 {
-	if (!compositeok() || m->container == None)
+	static int rootdone = 0;
+
+	if (!compositeok())
+		return;
+
+	/* Floating and fullscreen clients stay children of the root rather than of
+	 * a container, so redirecting only the containers left them with no
+	 * offscreen storage at all -- which is why they never appeared in the
+	 * overview. Automatic here too: the screen is painted exactly as before,
+	 * we are only asking the server to keep a copy. */
+	if (!rootdone) {
+		XCompositeRedirectSubwindows(dpy, root, CompositeRedirectAutomatic);
+		rootdone = 1;
+	}
+
+	if (m->container == None)
 		return;
 	/* Automatic, not Manual: we are not taking over painting the screen,
 	 * only asking the server to keep a copy we can sample. Scoped to the
@@ -58,18 +73,15 @@ drawthumb(Picture dst, Window win, int dx, int dy, int dw, int dh)
 	if (dw <= 0 || dh <= 0)
 		return;
 
-	/* A window can be resized or destroyed between naming its pixmap and
-	 * using it, which is the classic way this goes wrong. Errors here are
-	 * never worth dying for. */
-	XSetErrorHandler(xerrordummy);
-
+	/* The error handler and the sync belong to the caller, around the whole
+	 * set of thumbnails. A window can be resized or destroyed between naming
+	 * its pixmap and using it -- errors here are never worth dying for -- but
+	 * syncing per window turns every thumbnail into its own round trip, and
+	 * the overview draws a great many of them. */
 	if (!XGetWindowAttributes(dpy, win, &wa) || wa.map_state != IsViewable
 	|| !(fmt = XRenderFindVisualFormat(dpy, wa.visual))
-	|| !(pm = XCompositeNameWindowPixmap(dpy, win))) {
-		XSync(dpy, False);
-		XSetErrorHandler(xerror);
+	|| !(pm = XCompositeNameWindowPixmap(dpy, win)))
 		return;
-	}
 
 	pa.subwindow_mode = IncludeInferiors; /* client-side child windows too */
 	src = XRenderCreatePicture(dpy, pm, fmt, CPSubwindowMode, &pa);
@@ -87,8 +99,6 @@ drawthumb(Picture dst, Window win, int dx, int dy, int dw, int dh)
 
 	XRenderFreePicture(dpy, src);
 	XFreePixmap(dpy, pm);
-	XSync(dpy, False);
-	XSetErrorHandler(xerror);
 }
 
 /* What was drawn where, so a click can be turned back into a window. Filled on
@@ -104,6 +114,7 @@ drawoverview(Monitor *m)
 	XSetWindowAttributes wa;
 	XRenderPictFormat *fmt;
 	Picture dst;
+	Client *c;
 	StripItem items[64];
 	int totals[NUMTAGS + 1];
 	int nws, ws, nitems, widest = 0, rowh, rowy, xoff, yoff;
@@ -132,13 +143,17 @@ drawoverview(Monitor *m)
 
 	if (overviewwin == None) {
 		wa.override_redirect = True;
-		wa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
+		/* ParentRelative rather than a flat colour: the parent is the root
+		 * window, so what shows through is the wallpaper, in the right place
+		 * and at the right offset, with no compositor and nothing to keep in
+		 * step when it changes. The same trick the containers use. */
+		wa.background_pixmap = ParentRelative;
 		wa.event_mask = ExposureMask|ButtonPressMask;
 		/* the whole monitor, not the work area: the overview replaces the
 		 * screen while it is up, bar included */
 		overviewwin = XCreateWindow(dpy, root, m->mx, m->my, m->mw, m->mh, 0,
 			DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
-			CWOverrideRedirect|CWBackPixel|CWEventMask, &wa);
+			CWOverrideRedirect|CWBackPixmap|CWEventMask, &wa);
 	} else
 		XMoveResizeWindow(dpy, overviewwin, m->mx, m->my, m->mw, m->mh);
 	XMapRaised(dpy, overviewwin);
@@ -147,6 +162,8 @@ drawoverview(Monitor *m)
 	if (!(fmt = XRenderFindVisualFormat(dpy, DefaultVisual(dpy, screen))))
 		return;
 	dst = XRenderCreatePicture(dpy, overviewwin, fmt, 0, NULL);
+	/* One handler and one sync for the whole set; see drawthumb() */
+	XSetErrorHandler(xerrordummy);
 
 	rowh = (m->mh - 2 * OVERVIEWPAD - (nws - 1) * OVERVIEWGAP) / nws;
 	/* An empty workspace still gets a row, so it is somewhere you can see and
@@ -166,8 +183,8 @@ drawoverview(Monitor *m)
 		 * the eye run straight down the column of workspaces, with the strips
 		 * running off to either side by however much they overflow. */
 		vw = (m->ww - 2 * m->gappov) * scale;
-		xoff = (m->mw - vw) / 2
-			- (ws == cur ? m->scrollx : m->pertag->scrollxs[ws]) * scale;
+		vx = (m->mw - vw) / 2;
+		xoff = vx - (ws == cur ? m->scrollx : m->pertag->scrollxs[ws]) * scale;
 
 		if (novrows < (int)LENGTH(ovrows)) {
 			ovrows[novrows].ws = ws;
@@ -202,6 +219,37 @@ drawoverview(Monitor *m)
 			}
 		}
 
+		/* Floating windows are not on the strip and do not scroll with it:
+		 * they sit over the screen wherever they were put, so they are placed
+		 * against the frame rather than the strip. Drawn after the tiled ones
+		 * so they overlap here as they do in life. */
+		for (c = m->clients; c; c = c->next) {
+			if (!(c->tags & (1 << (ws - 1))) || !c->isfloating || c->isfullscreen)
+				continue;
+			dx = vx + (c->x - m->wx) * scale;
+			dy = yoff + (c->y - m->wy) * scale;
+			dw = c->w * scale;
+			dh = c->h * scale;
+
+			drawthumb(dst, c->win, dx, dy, dw, dh);
+
+			XSetForeground(dpy, drw->gc, scheme[c == m->sel
+				? SchemeSel : SchemeNorm][ColFg].pixel);
+			for (k = 1; k <= (c == m->sel ? 3 : 1); k++)
+				XDrawRectangle(dpy, overviewwin, drw->gc,
+					dx - k, dy - k, dw + 2 * k - 1, dh + 2 * k - 1);
+
+			if (novslots < (int)LENGTH(ovslots)) {
+				ovslots[novslots].c = c;
+				ovslots[novslots].ws = ws;
+				ovslots[novslots].x = dx;
+				ovslots[novslots].y = dy;
+				ovslots[novslots].w = dw;
+				ovslots[novslots].h = dh;
+				novslots++;
+			}
+		}
+
 		/* The screen itself, drawn over the strip: a frame around the slice
 		 * this workspace is scrolled to. It gives an empty workspace
 		 * something to be, and everywhere else it says which part of a strip
@@ -217,6 +265,8 @@ drawoverview(Monitor *m)
 	}
 
 	XRenderFreePicture(dpy, dst);
+	XSync(dpy, False);
+	XSetErrorHandler(xerror);
 }
 
 /* Click a window to go to it, or anywhere else in a row to go to that

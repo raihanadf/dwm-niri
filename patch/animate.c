@@ -354,9 +354,18 @@ animstep(void)
 	e = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
 
 	for (i = 0; i < nanim; i++) {
-		anims[i].cx = anims[i].fx + (int)((anims[i].tx - anims[i].fx) * e);
-		anims[i].cy = anims[i].fy + (int)((anims[i].ty - anims[i].fy) * e);
-		animplace(anims[i].c, anims[i].cx, anims[i].cy);
+		int nx = anims[i].fx + (int)((anims[i].tx - anims[i].fx) * e);
+		int ny = anims[i].fy + (int)((anims[i].ty - anims[i].fy) * e);
+
+		/* The loop runs whenever anything wakes it, not only on the frame
+		 * deadline, so most calls land on a pixel the window already sits at.
+		 * Moving it again is a request, a round of work in the server and a
+		 * ConfigureNotify to the client, all to change nothing. */
+		if (nx == anims[i].cx && ny == anims[i].cy)
+			continue;
+		anims[i].cx = nx;
+		anims[i].cy = ny;
+		animplace(anims[i].c, nx, ny);
 	}
 
 	if (t >= 1.0) {
