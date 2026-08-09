@@ -303,7 +303,11 @@ static Key keys[] = {
 	{ MODKEY,                       XK_b,          togglebar,              {0} },
 	/* Two axes of one space. h/l run along the strip, j/k run up and down the
 	 * workspace stack, and Shift takes the focused window with you either way.
-	 * Ctrl is the third, smaller axis: within a column. */
+	 * Super is the third, smaller axis: within a column.
+	 *
+	 * Super and not Control, which would read better here -- sxhkd holds
+	 * alt+control+{j,k,l} for the volume keys, and an X key grab belongs to
+	 * one client only, so binding it here would quietly cost you volume. */
 	{ MODKEY,                       XK_h,          scrollfocus,            {.i = -1 } },
 	{ MODKEY,                       XK_l,          scrollfocus,            {.i = +1 } },
 	{ MODKEY|ShiftMask,             XK_h,          scrollmove,             {.i = -1 } },
@@ -312,10 +316,10 @@ static Key keys[] = {
 	{ MODKEY,                       XK_k,          focusworkspace,         {.i = -1 } },
 	{ MODKEY|ShiftMask,             XK_j,          movetoworkspace,        {.i = +1 } },
 	{ MODKEY|ShiftMask,             XK_k,          movetoworkspace,        {.i = -1 } },
-	{ MODKEY|ControlMask,           XK_j,          scrollfocusstack,       {.i = +1 } },
-	{ MODKEY|ControlMask,           XK_k,          scrollfocusstack,       {.i = -1 } },
-	{ MODKEY|ControlMask|ShiftMask, XK_j,          movecoltoworkspace,     {.i = +1 } },
-	{ MODKEY|ControlMask|ShiftMask, XK_k,          movecoltoworkspace,     {.i = -1 } },
+	{ MODKEY|Mod4Mask,              XK_j,          scrollfocusstack,       {.i = +1 } },
+	{ MODKEY|Mod4Mask,              XK_k,          scrollfocusstack,       {.i = -1 } },
+	{ MODKEY|Mod4Mask|ShiftMask,    XK_j,          movecoltoworkspace,     {.i = +1 } },
+	{ MODKEY|Mod4Mask|ShiftMask,    XK_k,          movecoltoworkspace,     {.i = -1 } },
 	{ MODKEY,                       XK_w,          maximizecol,            {0} },
 	{ MODKEY|ShiftMask,             XK_m,          toggleminimap,          {0} },
 	{ MODKEY,                       XK_o,          toggleoverview,         {0} },
